@@ -1,0 +1,27 @@
+<idea-plugin>
+    <id>org.jetbrains.github_chat_plugin</id>
+    <name>Github Chat</name>
+    <vendor email="peterz@disroot.org">peterz</vendor>
+
+    <description><![CDATA[
+    <h2>Simple Github Chat Plugin with code navigation</h2>
+    ]]></description>
+
+    <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
+         on how to target different products -->
+    <!-- uncomment to enable plugin in all products
+    <depends>com.intellij.modules.lang</depends>
+    -->
+    <depends>org.jetbrains.plugins.github</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Github Chat" anchor="right" factoryClass="ChatWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <group id="MyPlugin.SampleMenu" text="Github Chat" description="Github Chat">
+            <add-to-group group-id="MainMenu" anchor="last"/>
+            <action id="Myplugin.Textboxes" class="HelloAction" text="Run" description="Runs Github Chat"/>
+        </group>
+    </actions>
+</idea-plugin>
