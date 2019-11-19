@@ -1,0 +1,26 @@
+body {
+    font-family: sans-serif;
+}
+
+p {
+    margin-bottom: 5px;
+}
+
+code {
+    font-family: monospaced;
+    background-color: #f0f0f0;
+}
+
+.header {
+    font-size: 0.9em;
+    font-weight: bold;
+    font-style: italic;
+    color: #8080d0;
+}
+
+.postheader {
+    margin-top: 10px;
+    font-size: 0.9em;
+    font-style: italic;
+    color: #8080d0;
+}
