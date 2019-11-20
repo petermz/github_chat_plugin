@@ -1,4 +1,3 @@
-import com.intellij.dvcs.repo.VcsRepositoryManager
 import com.intellij.lang.Language
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -15,11 +14,7 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.components.JBLoadingPanel
 import com.intellij.ui.components.JBScrollPane
-import git4idea.repo.GitRepositoryManager
-import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Dimension
-import java.awt.Point
+import java.awt.*
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -31,7 +26,7 @@ import javax.swing.text.html.HTMLEditorKit
 import javax.swing.text.html.StyleSheet
 
 fun log(s: String) = System.err.println(">>> $s")  ///Logger.getInstance(GithubChat::class.java).info(s)
-fun err(s: String) = System.err.println("!!! $s")
+fun err(s: String) = Logger.getInstance(GithubChat::class.java).error(s)
 
 class GithubChat(private val project: Project) {
     private val github = Github.create(project)!! // chat disabled if null
@@ -63,8 +58,7 @@ class GithubChat(private val project: Project) {
         inputGroup.add(inputControl)
         inputGroup.add(sendButton)
 
-        dropCodeControl = JButton("Drop Code")
-        dropCodeControl.addActionListener { dropCode() }
+        dropCodeControl = createDropCodeControl()
         loadingPanel = JBLoadingPanel(BorderLayout(), project)
 
         GithubChat.instances[project] = this
@@ -90,7 +84,6 @@ class GithubChat(private val project: Project) {
                 if (ev.isControlDown) {
                     val target = refs?.resolveAt(chatView.document, chatView.viewToModel2D(ev.point))
                     target ?: return
-                    log("file = ${target.containingFile}, lang = ${target.language}, valid = ${target.isValid}")
                     val fd = OpenFileDescriptor(project, target.containingFile.virtualFile, target.textOffset)
                     FileEditorManager.getInstance(project).navigateToTextEditor(fd, true)
                 }
@@ -100,7 +93,7 @@ class GithubChat(private val project: Project) {
     }
 
     private fun createInputControl(): JTextComponent {
-        val input = JTextArea("Type here, press Ctrl+Enter to send")
+        val input = JTextArea("Ctrl+Enter to send")
         input.lineWrap = true
         input.border = BorderFactory.createLineBorder(Color.BLACK)
         input.maximumSize = Dimension(Int.MAX_VALUE, 300)
@@ -115,18 +108,27 @@ class GithubChat(private val project: Project) {
         return input
     }
 
+    private fun createDropCodeControl(): JComponent {
+        val c = JLabel("""<html>
+            Code attached to post&nbsp;&nbsp;&nbsp;
+            <a href=''>click to drop</a></html>""")
+        c.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent?) = dropCode()
+        })
+        return c
+    }
+
     fun createContent(): JPanel {
         val refreshButton = JButton("Refresh")
         refreshButton.isFocusable = false
         refreshButton.addActionListener { refresh() }
 
         val inputCodeGroup = JPanel()
-        inputCodeGroup.layout = BoxLayout(inputCodeGroup, BoxLayout.Y_AXIS)
+        inputCodeGroup.layout = GridLayout(2, 1)
         inputCodeGroup.add(inputGroup)
         inputCodeGroup.add(dropCodeControl)
         dropCodeControl.isVisible = false
         dropCodeControl.isFocusable = false
-        dropCodeControl.run { preferredSize = maximumSize }
 
         val p = loadingPanel.contentPanel
         p.add(refreshButton, BorderLayout.NORTH)
@@ -140,15 +142,15 @@ class GithubChat(private val project: Project) {
     fun startPost(code: String?, lang: Language?) {
         inputControl.requestFocus()
         code ?: return
-        codeToShare = code.let {
-            val langAttr = lang?.run {" lang='${displayName.toLowerCase()}'"}.orEmpty()
+        codeToShare = toHtml(code).let {
+            val langAttr = lang?.run {" lang='$displayName'"}.orEmpty()
             "<pre><code$langAttr>$it</code></pre>"
         }
         dropCodeControl.isVisible = true
     }
 
     private fun sendPost() {
-        val post = "<p>${inputControl.text}${codeToShare.orEmpty()}"
+        val post = "<p>${toHtml(inputControl.text)}${codeToShare.orEmpty()}"
         async("Posting",
                 { github.post(post) },
                 {
@@ -172,6 +174,11 @@ class GithubChat(private val project: Project) {
         codeToShare = null
         dropCodeControl.isVisible = false
     }
+
+    private fun toHtml(s: String) = s
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
 
     private fun <R> async(title: String, comp: () -> R, cont: (R) -> Unit) {
         loadingPanel.startLoading()

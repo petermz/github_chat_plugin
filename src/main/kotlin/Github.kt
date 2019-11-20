@@ -1,16 +1,12 @@
-import com.intellij.openapi.components.service
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vcs.LocalFilePath
 import git4idea.GitUtil
 import git4idea.repo.GitRepositoryImpl
-import git4idea.repo.GitRepositoryManager
 import org.jetbrains.plugins.github.api.*
 import org.jetbrains.plugins.github.api.data.GithubIssue
 import org.jetbrains.plugins.github.api.data.GithubIssueComment
 import org.jetbrains.plugins.github.api.util.GithubApiPagesLoader
 import org.jetbrains.plugins.github.authentication.GithubAuthenticationManager
-import org.jetbrains.plugins.github.util.GithubGitHelper
 import org.jetbrains.plugins.github.util.GithubUrlUtil
 
 class Github(private val executor: GithubApiRequestExecutor,
@@ -50,7 +46,6 @@ class Github(private val executor: GithubApiRequestExecutor,
         try {
             val comment = executor.execute(GithubApiRequests.Repos.Issues.Comments.create(
                     serverPath, repoPath.user, repoPath.repository, chatIssueId, post))
-            log("Comment added: $comment")
             return formatComment(comment, post)
         } catch (e: Exception) {
             return null
@@ -78,33 +73,21 @@ class Github(private val executor: GithubApiRequestExecutor,
         val CHAT_ISSUE_TITLE = "[Chat]"
         val CHAT_START_TEXT = "Let's have a chat here!"
 
-        fun enabledFor(project: Project?): Boolean {
-            val enabled = project != null &&
-                    !project.isDefault() &&
-//                    service<GithubGitHelper>().havePossibleRemotes(project) ///doesn't work?
-//                    GitRepositoryManager.getInstance(project).repositories.any()
-                    create(project) != null
-            log("(hack) chat enabled = $enabled")
-            val poss = service<GithubGitHelper>().havePossibleRemotes(project!!) ///doesn't
-            log("(hack) poss = $poss")
-            val repo = GitRepositoryManager.getInstance(project).repositories
-            log("(hack) repo = $repo")
-            val rep1 = GitRepositoryManager.getInstance(project).getRepositoryForFile(
-                    LocalFilePath("resources/chat.css", true))
-            log("(hack) rep1 = $rep1")
-            return enabled
-        }
+        fun enabledFor(project: Project?) =
+            project != null &&
+            ! project.isDefault() &&
+//            service<GithubGitHelper>().havePossibleRemotes(project) ///doesn't work?
+//            GitRepositoryManager.getInstance(project).repositories.any()
+            create(project) != null
 
         fun create(project: Project): Github? {
             GitUtil.findGitDir(project.baseDir) ?: return null
 
             val repo = GitRepositoryImpl.getInstance(
                     project.baseDir, project, project, true)
-            log("repo = $repo")
             val url = repo.remotes.firstOrNull()?.firstUrl
-            log("url $url")
             val path = url?.run { GithubUrlUtil.getUserAndRepositoryFromRemoteUrl(this) }
-            log("path $path")
+            log("path ($repo) = $path")
             path ?: return null
 
             val authMgr = GithubAuthenticationManager.getInstance()
