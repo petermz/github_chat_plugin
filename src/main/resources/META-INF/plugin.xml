@@ -17,7 +17,7 @@
     <depends>org.jetbrains.plugins.github</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="com.example.githubchat.Github Chat" anchor="right"
+        <toolWindow id="Github Chat" anchor="right"
                     factoryClass="com.example.githubchat.ChatWindowFactory"
                     conditionClass="com.example.githubchat.ChatWindowFactory"/>
     </extensions>

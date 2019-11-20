@@ -40,12 +40,12 @@ class References private constructor(private val resolvers: Map<Element, Resolve
                     val lang = Language.findLanguageByID(langValue) ?: JavaLanguage.INSTANCE
                     val code = elem.document.getText(elem.startOffset, elem.endOffset - elem.startOffset)
                     log("Found code ($lang) : $code")
-                    val resolvers = listOf(
+                    dict.put(elem, Resolver(
+                            fileFactory.createFileFromText(lang, code),
+                            fragFactory.createReferenceCodeFragment(
+                                    code, null, true, true),
                             fragFactory.createExpressionCodeFragment(
-                                    code, null, null, true),
-                            fileFactory.createFileFromText(lang, code)
-                    ).filterNotNull()
-                    dict.put(elem, Resolver(resolvers))
+                                    code, null, null, true)))
                 } else {
                     for (i in 0.until(elem.elementCount))
                         traverse(elem.getElement(i))
@@ -60,10 +60,10 @@ class References private constructor(private val resolvers: Map<Element, Resolve
 }
 
 // fallback-capable PsiReference resolver
-private class Resolver(private val resolvers: List<PsiElement>) {
+private class Resolver(vararg private val resolvers: PsiElement?) {
     fun resolve(pos: Int): PsiElement? {
         for (psi in resolvers) {
-            val ref = psi.findReferenceAt(pos)
+            val ref = psi?.findReferenceAt(pos)
             val target = ref?.resolve()
             log("RSLV: ref=$ref (${ref?.element?.text}), t=$target")
             if (target != null) return target
