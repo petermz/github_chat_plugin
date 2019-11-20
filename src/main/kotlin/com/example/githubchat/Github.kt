@@ -1,3 +1,5 @@
+package com.example.githubchat
+
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.project.Project
 import git4idea.GitUtil

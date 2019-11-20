@@ -1,3 +1,5 @@
+package com.example.githubchat
+
 import com.intellij.lang.Language
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -25,7 +27,7 @@ import javax.swing.text.JTextComponent
 import javax.swing.text.html.HTMLEditorKit
 import javax.swing.text.html.StyleSheet
 
-fun log(s: String) = System.err.println(">>> $s")  ///Logger.getInstance(GithubChat::class.java).info(s)
+fun log(s: String) = System.err.println(">>> $s")  ///Logger.getInstance(com.example.githubchat.GithubChat::class.java).info(s)
 fun err(s: String) = Logger.getInstance(GithubChat::class.java).error(s)
 
 class GithubChat(private val project: Project) {
@@ -61,7 +63,7 @@ class GithubChat(private val project: Project) {
         dropCodeControl = createDropCodeControl()
         loadingPanel = JBLoadingPanel(BorderLayout(), project)
 
-        GithubChat.instances[project] = this
+        instances[project] = this
     }
 
     private fun loadStyleSheet(): StyleSheet {
@@ -197,7 +199,7 @@ class GithubChat(private val project: Project) {
     }
 
     companion object {
-        val ID = "Github Chat"
+        val ID = "com.example.githubchat.Github Chat"
         ///canonical way?
         private val instances = HashMap<Project, GithubChat>()
         fun getInstance(project: Project?): GithubChat? = instances[project]
