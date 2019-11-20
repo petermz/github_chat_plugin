@@ -1,6 +1,7 @@
 import com.intellij.dvcs.repo.VcsRepositoryManager
 import com.intellij.lang.Language
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.progress.EmptyProgressIndicator
@@ -12,57 +13,59 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Condition
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiFileFactory
 import com.intellij.ui.components.JBLoadingPanel
 import com.intellij.ui.components.JBScrollPane
 import git4idea.repo.GitRepositoryManager
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
+import java.awt.Point
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import java.awt.geom.Point2D
 import java.io.InputStreamReader
 import javax.swing.*
-import javax.swing.text.AttributeSet
-import javax.swing.text.Document
-import javax.swing.text.Element
 import javax.swing.text.JTextComponent
-import javax.swing.text.html.HTML
 import javax.swing.text.html.HTMLEditorKit
 import javax.swing.text.html.StyleSheet
 
+fun log(s: String) = System.err.println(">>> $s")  ///Logger.getInstance(GithubChat::class.java).info(s)
+fun err(s: String) = System.err.println("!!! $s")
+
 class GithubChat(private val project: Project) {
-    private val github = Github.create(project)
-    private val code2psi = HashMap<Element, PsiFile>()
+    private val github = Github.create(project)!! // chat disabled if null
+    private var refs: References? = null
     private var codeToShare: String? = null
     private var html: String = ""
         set(value) {
             field = value
-            chatView.text = value
-            scan(chatView.document)
+            chatView.run {
+                text = value
+                (parent as JViewport).viewPosition = Point(0, size.height) // scroll to bottom
+            }
+            refs = References.build(project, chatView.document)
         }
-    private val chatView = createChatView()
-    private val input = createInput()
-    private val codeLabel = JLabel()
-    private val closeCodeLabel = JLabel("x")
-    private val codePanel = JPanel()
-    private val loadingPanel = JBLoadingPanel(BorderLayout(), project)
+    private val chatView: JEditorPane
+    private val inputControl: JTextComponent
+    private val inputGroup: JComponent
+    private val dropCodeControl: JComponent
+    private val loadingPanel: JBLoadingPanel
 
     init {
-        codePanel.isVisible = false
-        codePanel.layout = BoxLayout(codePanel, BoxLayout.X_AXIS)
-//        codeLabel.maximumSize = codeLabel.maximumSize.apply { width = Int.MAX_VALUE }
-        codePanel.add(codeLabel)
+        chatView = createChatView()
 
-        closeCodeLabel.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent?) = dropCodeToShare()
-        })
-//        closeCodeLabel.maximumSize = closeCodeLabel.minimumSize
-        codePanel.add(closeCodeLabel)
+        inputControl = createInputControl()
+        val sendButton = JButton("Send")
+        sendButton.addActionListener { sendPost() }
+        inputGroup = JPanel()
+        inputGroup.layout = BoxLayout(inputGroup, BoxLayout.X_AXIS)
+        inputGroup.add(inputControl)
+        inputGroup.add(sendButton)
+
+        dropCodeControl = JButton("Drop Code")
+        dropCodeControl.addActionListener { dropCode() }
+        loadingPanel = JBLoadingPanel(BorderLayout(), project)
 
         GithubChat.instances[project] = this
     }
@@ -78,40 +81,35 @@ class GithubChat(private val project: Project) {
         val chatPane = JEditorPane()
         chatPane.isEditable = false
         chatPane.isFocusable = false
-//        chatPane.contentType = "text/html"
         chatPane.editorKit = object : HTMLEditorKit() {
             override fun getStyleSheet(): StyleSheet = loadStyleSheet()
         }
 
         chatPane.addMouseListener(object: MouseAdapter() {
             override fun mouseClicked(ev: MouseEvent) {
-                if (ev.isControlDown) navigateFrom(ev.point)
+                if (ev.isControlDown) {
+                    val target = refs?.resolveAt(chatView.document, chatView.viewToModel2D(ev.point))
+                    target ?: return
+                    log("file = ${target.containingFile}, lang = ${target.language}, valid = ${target.isValid}")
+                    val fd = OpenFileDescriptor(project, target.containingFile.virtualFile, target.textOffset)
+                    FileEditorManager.getInstance(project).navigateToTextEditor(fd, true)
+                }
             }
         })
         return chatPane
     }
 
-    private fun createInput(): JTextComponent {
+    private fun createInputControl(): JTextComponent {
         val input = JTextArea("Type here, press Ctrl+Enter to send")
         input.lineWrap = true
         input.border = BorderFactory.createLineBorder(Color.BLACK)
         input.maximumSize = Dimension(Int.MAX_VALUE, 300)
-        input.isEnabled = github != null///
 
         input.addKeyListener(object : KeyAdapter() {
-            override fun keyPressed(ev: KeyEvent?) {
-                ev ?: return
-                if (ev.isControlDown && ev.keyCode == KeyEvent.VK_ENTER) {
-                    val post = "<p>${input.text}${codeToShare.orEmpty()}"
-                    async("Posting",
-                            { github!!.post(post) }, ///!!
-                            {
-                                if (it != null) html += it
-                                else Messages.showErrorDialog(chatView, "Failed to submit post")
-                            })
-                    input.text = ""
-                    dropCodeToShare()
-                } else super.keyPressed(ev)
+            override fun keyPressed(e: KeyEvent?) {
+                if (e != null && e.isControlDown && e.keyCode == KeyEvent.VK_ENTER)
+                    sendPost()
+                else super.keyPressed(e)
             }
         })
         return input
@@ -119,89 +117,60 @@ class GithubChat(private val project: Project) {
 
     fun createContent(): JPanel {
         val refreshButton = JButton("Refresh")
-        refreshButton.addActionListener {_ -> refresh()}
+        refreshButton.isFocusable = false
+        refreshButton.addActionListener { refresh() }
 
-        val inputP = JPanel()
-        inputP.layout = BoxLayout(inputP, BoxLayout.Y_AXIS)
-        inputP.add(input)
-        inputP.add(codePanel)
+        val inputCodeGroup = JPanel()
+        inputCodeGroup.layout = BoxLayout(inputCodeGroup, BoxLayout.Y_AXIS)
+        inputCodeGroup.add(inputGroup)
+        inputCodeGroup.add(dropCodeControl)
+        dropCodeControl.isVisible = false
+        dropCodeControl.isFocusable = false
+        dropCodeControl.run { preferredSize = maximumSize }
 
         val p = loadingPanel.contentPanel
         p.add(refreshButton, BorderLayout.NORTH)
         p.add(JBScrollPane(chatView), BorderLayout.CENTER)
-        p.add(inputP, BorderLayout.SOUTH)
+        p.add(inputCodeGroup, BorderLayout.SOUTH)
 
         refresh()
         return loadingPanel
     }
 
     fun startPost(code: String?, lang: Language?) {
-        input.requestFocus()
+        inputControl.requestFocus()
         code ?: return
         codeToShare = code.let {
             val langAttr = lang?.run {" lang='${displayName.toLowerCase()}'"}.orEmpty()
             "<pre><code$langAttr>$it</code></pre>"
         }
-        codeLabel.text = "Code" ///code.let {"<html>$it</html>"}
-        codePanel.isVisible = true
+        dropCodeControl.isVisible = true
+    }
+
+    private fun sendPost() {
+        val post = "<p>${inputControl.text}${codeToShare.orEmpty()}"
+        async("Posting",
+                { github.post(post) },
+                {
+                    if (it != null) html += it
+                    else Messages.showErrorDialog(chatView, "Failed to submit post")
+                })
+        inputControl.text = ""
+        dropCode()
     }
 
     fun refresh() {
         async("Reading chat",
-                { github!!.readChat() },///!!
-                { html = it })
+                { github.readChat() },
+                {
+                    html = it ?: "<h3>Failed to read chat contents</h3>"
+                    inputGroup.isVisible = it != null
+                })
     }
 
-    private fun dropCodeToShare() {
+    private fun dropCode() {
         codeToShare = null
-        codePanel.isVisible = false
-    }
-
-    private fun isCode(elem: Element) = elem.attributes.isDefined(HTML.Tag.CODE)
-
-    private fun scan(doc: Document) {
-        code2psi.clear()
-        fun traverse(elem: Element) {
-            if (isCode(elem)) {
-                val attrs = elem.attributes.getAttribute(HTML.Tag.CODE) as AttributeSet
-                val langValue = attrs.getAttribute(HTML.Attribute.LANG) as String?
-                val lang = Language.findLanguageByID(langValue?.toLowerCase()) ?: Language.ANY
-                val code = elem.document.getText(elem.startOffset, elem.endOffset - elem.startOffset)
-                log("Found code ($lang) : $code")
-                val psi = PsiFileFactory.getInstance(project).createFileFromText(lang, code)
-                code2psi.put(elem, psi)
-            } else {
-                for (i in 0.until(elem.elementCount))
-                    traverse(elem.getElement(i))
-            }
-        }
-        traverse(doc.defaultRootElement)
-        log("Found ${code2psi.size} code sections")
-    }
-
-    private fun codeElementAt(elem: Element, pos: Int): Element? {
-        if (isCode(elem)) return elem
-        else {
-            val idx = elem.getElementIndex(pos)
-            return if (idx < 0) null else codeElementAt(elem.getElement(idx), pos)
-        }
-    }
-
-    private fun navigateFrom(pt: Point2D) {
-        val pos = chatView.viewToModel2D(pt)
-        val elem = codeElementAt(chatView.document.defaultRootElement, pos)
-        if (elem == null) {
-            log("Click outside <code> elem")
-            return
-        }
-        val psiPos = pos - elem.startOffset
-        val ref = code2psi.get(elem)?.findReferenceAt(psiPos)
-        val target = ref?.resolve()
-        log("ref elem=${ref?.element}, target=$target")
-        target ?: return
-        log("file = ${target.containingFile}, lang = ${target.language}, valid = ${target.isValid}")
-        val fd = OpenFileDescriptor(project, target.containingFile.virtualFile, target.textOffset)
-        FileEditorManager.getInstance(project).navigateToTextEditor(fd, true)
+        dropCodeControl.isVisible = false
     }
 
     private fun <R> async(title: String, comp: () -> R, cont: (R) -> Unit) {
@@ -237,13 +206,5 @@ class ChatWindowFactory : ToolWindowFactory, Condition<Project> {
                         chatWindow.createContent(), "", false))
     }
 
-    override fun value(project: Project?): Boolean {
-        project ?: return false
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        log("repos = $repos")
-        val reps = VcsRepositoryManager.getInstance(project).repositories
-        log("reps = $reps")
-        return true
-//    Github.enabledFor(project) /// seems called before github plugin initializes
-    }
+    override fun value(project: Project?): Boolean = Github.enabledFor(project)
 }

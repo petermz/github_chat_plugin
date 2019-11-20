@@ -2,28 +2,31 @@ import com.intellij.lang.Language
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.LangDataKeys
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.psi.PsiDocumentManager
-import com.intellij.psi.PsiFileFactory
+import com.intellij.psi.*
+import com.intellij.psi.impl.file.PsiDirectoryFactoryImpl
+import com.intellij.psi.impl.file.impl.FileManager
+import com.intellij.psi.search.PsiSearchHelper
+import com.intellij.psi.stubs.StubIndex
+import com.intellij.psi.stubs.StubIndexKey
 import org.jetbrains.plugins.github.api.GithubApiRequestExecutorManager
 import org.jetbrains.plugins.github.api.GithubApiRequests
 import org.jetbrains.plugins.github.api.util.GithubApiPagesLoader
 import org.jetbrains.plugins.github.authentication.GithubAuthenticationManager
 import javax.swing.SwingUtilities
 
-fun log(s: String) = System.err.println(">>> $s")  ///Logger.getInstance(">>>").info(s)
-fun err(s: String) = System.err.println("!!! $s")
-
 class ShareSelectionAction: AnAction("Share in Chat") {
     override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
-        val lang = PsiDocumentManager.getInstance(e.project!!).getPsiFile(editor.document)?.language
-        val toolWindow = ToolWindowManager.getInstance(e.project!!).getToolWindow(GithubChat.ID)
-        log("toolWindow = $toolWindow")
+        val lang = PsiDocumentManager.getInstance(project).getPsiFile(editor.document)?.language
         GithubChat.getInstance(e.project)?.startPost(editor.selectionModel.selectedText, lang)
     }
 
@@ -63,60 +66,43 @@ class ViewChatAction: AnAction("View Chat") {
 class PsiLookupAction: AnAction("PSI Lookup") {
     override fun actionPerformed(ev: AnActionEvent) {
         val kotlin = Language.findLanguageByID("kotlin")
-//        val code = "println(KotlinVersion.CURRENT)"
-//        val offset = code.indexOf("RRE")
-        val code = "println(Euler23.solve())"
-        val offset = code.indexOf("23")
+        val code = "println(KotlinVersion.CURRENT)"
+        val offset = code.indexOf("RRE")
+//        val code = "println(Euler23.solve())"
+//        val offset = code.indexOf("lve(")
+
+        fun inspect(psi: PsiElement, mode: String) {
+            log("($mode): psi = $psi")
+            val ref = psi.findReferenceAt(offset)
+            log("($mode): ref = $ref, target = ${ref?.resolve()}")
+            val t = ref?.resolve()
+            log("($mode): file = ${t?.containingFile}, lang = ${t?.language}, valid = ${t?.isValid}")
+
+            if (t != null) {
+                val fd = OpenFileDescriptor(ev.project!!, t.containingFile.virtualFile, t.textOffset)
+                FileEditorManager.getInstance(ev.project!!).navigateToTextEditor(fd, true)
+                log("Hooray!!!")
+            }
+        }
+        val root =
+                JavaPsiFacade.getElementFactory(ev.project!!).createExpressionFromText(code, null)
+        val javaPsi = JavaCodeFragmentFactory.getInstance(ev.project)
+                .createExpressionCodeFragment(code, null, null, true)
+
         val psiFile = PsiFileFactory.getInstance(ev.project).createFileFromText(kotlin!!, code)
-        log("psi = $psiFile")
-        val ref = psiFile.findReferenceAt(offset)
-        log("ref = $ref, target = ${ref?.resolve()}")
-        val t = ref?.resolve()!!
-        log("file = ${t.containingFile}, lang = ${t.language}, valid = ${t.isValid}")
-        val fd = OpenFileDescriptor(ev.project!!, t.containingFile.virtualFile, t.textOffset)
-        FileEditorManager.getInstance(ev.project!!).navigateToTextEditor(fd, true)
+
+        inspect(root, "expr")
+        inspect(javaPsi, "javaFrag")
+        inspect(psiFile, "psiFile")
     }
 }
 
 class GithubAction : AnAction("Github Stuff") {
-    override fun actionPerformed(event: AnActionEvent) {
-        val project = event.project
-        if (project == null) {
-            err("No project")
-            return
-        }
-
-        if (SwingUtilities.isEventDispatchThread()) {
-            val authMgr = GithubAuthenticationManager.getInstance()
-            if (! authMgr.ensureHasAccounts(project)) return
-            val account = authMgr.getAccounts().first()
-            log("acc $account")
-
-            val executor = GithubApiRequestExecutorManager.getInstance().getExecutor(account)
-//            val issue = executor.execute(GithubApiRequests.Repos.Issues.get(
-//                    account.server, "petermz", "github_chat_plugin", "1"))
-//            if (issue == null) {
-//                err("Issue not found")
-//                return
-//            }
-//            val comments = executor.execute(GithubApiRequests.Repos.Issues.Comments.get(
-//                    account.server, "petermz", "github_chat_plugin", "1",
-//                    GithubRequestPagination()))
-//            comments.items.forEach {log(it.bodyHtml)}
-
-            val post = executor.execute(GithubApiRequests.Repos.Issues.Comments.create(
-                    account.server, account.name, "github_chat_plugin", "1",
-                    """<p>Here's what I call some good code!
-                        Note that <code lang='Java'>System.out.println</code> is never used.
-                        <p><code lang='Kotlin'>MergeSort.solve()</code>"""))
-            log("Posted $post")
-
-            val pages =
-                    GithubApiPagesLoader.loadAll(executor, EmptyProgressIndicator(),
-                            GithubApiRequests.Repos.Issues.Comments.pages(
-                                    account.server, "petermz", "github_chat_plugin", "1"))
-            pages.forEach { log("comment: ${it.bodyHtml}") }
+    override fun actionPerformed(e: AnActionEvent) {
+        var psi: PsiElement? = e.getData(LangDataKeys.PSI_FILE)
+        while (psi != null) {
+            log("psi (${psi.javaClass})  $psi")
+            psi = psi.parent
         }
     }
 }
-
